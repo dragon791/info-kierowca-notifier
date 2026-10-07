@@ -9,6 +9,7 @@ Composes notifier (poll loop), web.server (status page), and auth.session
 them — see each module's own docstring for what it does on its own.
 """
 import http.server
+import calendar
 import json
 import os
 import re
@@ -195,15 +196,25 @@ def build_config(payload):
     if not NTFY_TOPIC_PATTERN.match(ntfy_topic):
         raise ValueError(NTFY_TOPIC_ERROR)
 
+    search_mode = payload.get("search_mode", "multi")
+    if search_mode not in ("single", "multi"):
+        raise ValueError("Choose a supported search mode")
+
     organization_ids = payload.get("organization_ids")
     if not isinstance(organization_ids, list) or not organization_ids:
         raise ValueError("Pick at least one WORD center")
+
     organization_ids = to_int_list(organization_ids, "WORD center IDs")
-    if len(organization_ids) > notifier.SEARCH_ORG_ID_COUNT:
-        raise ValueError(
-            f"Pick at most {notifier.SEARCH_ORG_ID_COUNT} WORD centers "
-            "— the site's search only accepts that many at a time"
-        )
+
+    if search_mode == "single":
+        if len(organization_ids) != 1:
+            raise ValueError("Single-center mode requires exactly one WORD center")
+    else:
+        if len(organization_ids) > notifier.SEARCH_ORG_ID_COUNT:
+            raise ValueError(
+                f"Pick at most {notifier.SEARCH_ORG_ID_COUNT} WORD centers "
+                "— the site's search only accepts that many at a time"
+            )
 
     exam_types = payload.get("exam_types")
     if not isinstance(exam_types, list) or not exam_types or not set(exam_types) <= set(EXAM_TYPE_CHOICES):
@@ -254,11 +265,20 @@ def build_config(payload):
         except ValueError:
             raise ValueError("Earliest acceptable exam date must be a date like 2026-09-14")
         today = datetime.now().date()
-        horizon = today + timedelta(days=notifier.MAX_DAYS_AHEAD)
-        if not today <= parsed_search_start <= horizon:
-            raise ValueError("Earliest acceptable exam date must be within the next 31 days")
-        if parsed_search_start >= parsed_current_slot:
-            raise ValueError("Earliest acceptable exam date must be before the current booking date")
+        minimum = today + timedelta(days=notifier.SEARCH_START_MIN_DAYS_AHEAD)
+        target_month = today.month - 1 + 6
+        max_year = today.year + target_month // 12
+        max_month = target_month % 12 + 1
+        maximum = date(
+            max_year,
+            max_month,
+            min(today.day, calendar.monthrange(max_year, max_month)[1]),
+        )
+
+        if parsed_search_start < minimum:
+            raise ValueError("Earliest acceptable exam date must be at least 2 days from today")
+        if parsed_search_start > maximum:
+            raise ValueError("Earliest acceptable exam date must be within the next 6 months")
     else:
         search_start = ""
 
@@ -271,6 +291,7 @@ def build_config(payload):
     config = {
         "login_method": login_method,
         "pz_username": pz_username,
+        "search_mode": search_mode,
         "organization_ids": organization_ids,
         "category": category,
         "profile_number": profile_number,

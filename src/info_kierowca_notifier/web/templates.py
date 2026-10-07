@@ -501,6 +501,52 @@ WIZARD_PAGE = """<!doctype html>
     border: 1px solid rgba(217,140,140,0.4); border-radius: 7px; cursor: pointer; font-size: 0.88rem; font-weight: 500; }
   #reset-account-btn:hover { background: rgba(217,140,140,0.1); border-color: rgba(217,140,140,0.7); }
 
+/* search mode */
+.search-mode-group {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.search-mode-option {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.7rem;
+  margin: 0;
+  border: 1px solid #3d3d3d;
+  border-radius: 7px;
+  background: #262626;
+  cursor: pointer;
+}
+
+.search-mode-option:has(input:checked) {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+.search-mode-option input {
+  margin-top: 0.2rem;
+  accent-color: var(--accent);
+}
+
+.search-mode-option span {
+  display: flex;
+  flex-direction: column;
+}
+
+.search-mode-option b {
+  font-size: 0.9rem;
+}
+
+.search-mode-option small {
+  margin-top: 0.15rem;
+  font-size: 0.78rem;
+  opacity: 0.55;
+  line-height: 1.3;
+}
+
   /* combobox + selected centers */
   .combobox { position: relative; margin-bottom: 0.8rem; }
   .combobox input[type=text] { margin-bottom: 0; }
@@ -723,6 +769,27 @@ WIZARD_PAGE = """<!doctype html>
 
       <div class="divider"></div>
 
+    <label>Search mode</label>
+    <div class="search-mode-group">
+        <label class="search-mode-option">
+            <input type="radio" name="search_mode" value="single">
+            <span>
+                <b id="search-mode-single-title">Single center</b>
+                <small id="search-mode-single-desc">All dates made available by the selected WORD</small>
+            </span>
+        </label>
+
+        <label class="search-mode-option">
+            <input type="radio" name="search_mode" value="multi" checked>
+            <span>
+                <b id="search-mode-multi-title">Multiple centers</b>
+                <small id="search-mode-multi-desc">Up to 5 centers</small>
+            </span>
+        </label>
+    </div>
+
+    <div class="divider"></div>
+
       <label for="center-search">WORD centers to watch (__CENTER_COUNT__ nationwide)</label>
       <div class="combobox">
         <input type="text" id="center-search" placeholder="Click to browse all centers, or type to filter..." autocomplete="off">
@@ -753,7 +820,7 @@ WIZARD_PAGE = """<!doctype html>
         <input type="hidden" id="search_start_date">
         <div class="calendar" id="search-start-calendar"></div>
       </div>
-      <div class="hint">Ignore slots before this date. Leave blank to search from today; the site searches at most 31 days ahead.</div>
+      <div class="hint" id="search-start-hint"></div>
 
       <div class="freq-head" style="margin-top:1rem;">
         <label for="time_from_slider">Preferred time of day</label>
@@ -933,9 +1000,7 @@ document.getElementById('dismiss-booking-note').addEventListener('click', () => 
   bookingNote.hidden = true;
 });
 const centerLabelHeading = document.querySelector('label[for="center-search"]');
-centerLabelHeading.textContent = ikwI18n.lang() === 'pl'
-  ? `Ośrodki WORD do obserwowania (${CENTERS.length} w kraju)`
-  : `WORD centers to watch (${CENTERS.length} nationwide)`;
+centerLabelHeading.textContent = t(`WORD centers to watch (${CENTERS.length} nationwide)`);
 function ikwGoDashboard(type) {
   if (IKW_EMBEDDED) {
     window.parent.postMessage({ type }, window.location.origin);
@@ -951,6 +1016,11 @@ const CENTERS_BY_ID = new Map(CENTERS.map(c => [c.id, c]));
 // unrelated fillers whose results get discarded, but that only works up to
 // this many real picks.
 const MAX_CENTERS = 5;
+
+let searchMode = EXISTING_CONFIG
+  ? (EXISTING_CONFIG.search_mode || 'multi')
+  : 'multi';
+
 const selectedIds = new Set(
   (EXISTING_CONFIG ? EXISTING_CONFIG.organization_ids : []).filter(id => KNOWN_IDS.has(id))
 );
@@ -969,7 +1039,7 @@ function renderSelected() {
   if (!selectedIds.size) {
     const empty = document.createElement('div');
     empty.className = 'no-selection';
-    empty.textContent = 'No centers yet — search above to add one.';
+    empty.textContent = ikwI18n.t('No centers yet — search above to add one.');
     selectedList.appendChild(empty);
     centerCount.innerHTML = '';
     return;
@@ -1000,7 +1070,7 @@ function renderSelected() {
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'remove-btn';
-    removeBtn.title = 'Remove';
+    removeBtn.title = ikwI18n.t('Remove');
     removeBtn.textContent = '×';
     removeBtn.addEventListener('click', () => {
       selectedIds.delete(id);
@@ -1011,8 +1081,49 @@ function renderSelected() {
     selectedList.appendChild(row);
   });
   const n = selectedIds.size;
-  centerCount.innerHTML = ikwI18n.lang() === 'pl' ? `Obserwujesz <b>${n}</b> z ${MAX_CENTERS} ośrodków pod kątem wolnych terminów.` : `Watching <b>${n}</b> of ${MAX_CENTERS} centers for open slots.`;
+
+  if (searchMode === 'single') {
+    centerCount.textContent = ikwI18n.t('Single-center mode — searching all available dates.');
+  } else {
+    centerCount.textContent = ikwI18n.t(`Watching ${n} of ${MAX_CENTERS} centers for open slots.`);
+  }
 }
+
+function updateSearchModeLabels() {
+  document.getElementById('search-mode-single-title').textContent = ikwI18n.t('Single center');
+  document.getElementById('search-mode-single-desc').textContent = ikwI18n.t('All dates made available by the selected WORD');
+  document.getElementById('search-mode-multi-title').textContent = ikwI18n.t('Multiple centers');
+  document.getElementById('search-mode-multi-desc').textContent = ikwI18n.t('Up to 5 centers');
+}
+
+function setSearchMode(mode) {
+  searchMode = mode === 'single' ? 'single' : 'multi';
+
+  document.querySelectorAll('input[name="search_mode"]').forEach((radio) => {
+    radio.checked = radio.value === searchMode;
+  });
+
+  if (searchMode === 'single' && selectedIds.size > 1) {
+    const firstId = selectedIds.values().next().value;
+    selectedIds.clear();
+    selectedIds.add(firstId);
+  }
+
+  const searchStartHint = document.getElementById('search-start-hint');
+
+  updateSearchModeLabels();
+  searchStartHint.textContent = ikwI18n.t('Earliest search date: from 2 days from today up to 6 months ahead.');
+
+  updateSearchStartBound();
+  renderSearchStartCalendar();
+  renderSelected();
+}
+
+document.querySelectorAll('input[name="search_mode"]').forEach((radio) => {
+  radio.addEventListener('change', () => {
+    if (radio.checked) setSearchMode(radio.value);
+  });
+});
 
 function closeDropdown() {
   dropdown.style.display = 'none';
@@ -1021,9 +1132,19 @@ function closeDropdown() {
   activeIndex = -1;
 }
 
+function centerLimit() {
+  return searchMode === 'single' ? 1 : MAX_CENTERS;
+}
+
 function selectCenter(id) {
-  if (selectedIds.size >= MAX_CENTERS) return;
-  selectedIds.add(id);
+  if (searchMode === 'single') {
+    selectedIds.clear();
+    selectedIds.add(id);
+  } else {
+    if (selectedIds.size >= MAX_CENTERS) return;
+    selectedIds.add(id);
+  }
+
   renderSelected();
   searchInput.value = '';
   closeDropdown();
@@ -1039,7 +1160,7 @@ function updateActiveItem() {
 
 function renderDropdown(filter) {
   const f = filter.trim().toLowerCase();
-  const atCap = selectedIds.size >= MAX_CENTERS;
+  const atCap = searchMode === 'multi' && selectedIds.size >= MAX_CENTERS;
   currentMatches = atCap ? [] : CENTERS.filter(c => !selectedIds.has(c.id) && (!f || centerLabel(c).toLowerCase().includes(f)));
   activeIndex = currentMatches.length ? 0 : -1;
   dropdown.innerHTML = '';
@@ -1163,7 +1284,7 @@ function fmtInterval(seconds) {
 function updatePollIntervalDisplay() {
   const seconds = POLL_INTERVAL_STEPS[Number(pollSlider.value)];
   pollIntervalHidden.value = seconds;
-  pollIntervalLabel.textContent = ikwI18n.lang() === 'pl' ? `Co ${fmtInterval(seconds)}` : `Every ${fmtInterval(seconds)}`;
+  pollIntervalLabel.textContent = t(`Every ${fmtInterval(seconds)}`);
 }
 
 function setPollIntervalSeconds(seconds) {
@@ -1470,23 +1591,30 @@ dpInput.addEventListener('click', () => { calendar.classList.contains('open') ? 
 dpInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCalendar(); });
 document.addEventListener('click', (e) => { if (!document.getElementById('datepick').contains(e.target)) closeCalendar(); });
 
-// Independent optional lower bound for eligible slots.  It deliberately uses
-// the same calendar language as the required booking date, while limiting
-// selection to the government site's known search horizon.
+// Search-start range mirrors info-kierowca.pl: from two days ahead through
+// six calendar months ahead, identically for single- and multi-center search.
+// It is deliberately independent of the user's currently booked exam date.
 const sdpInput = document.getElementById('search_start_date_display');
 const sdpValue = document.getElementById('search_start_date');
 const sdpCalendar = document.getElementById('search-start-calendar');
 const clearSearchStartDate = document.getElementById('clear-search-start-date');
-const searchHorizonDate = new Date(todayDate);
-searchHorizonDate.setDate(searchHorizonDate.getDate() + 31);
-let sdpView = new Date(todayDate.getFullYear(), todayDate.getMonth(), 1);
-let selectedSearchStartDate = null;
-function latestSearchStartDate() {
-  if (!selectedDate) return null;
-  const dayBeforeBooking = new Date(selectedDate);
-  dayBeforeBooking.setDate(dayBeforeBooking.getDate() - 1);
-  return dayBeforeBooking < searchHorizonDate ? dayBeforeBooking : searchHorizonDate;
+const earliestSearchStartDate = new Date(todayDate);
+earliestSearchStartDate.setDate(earliestSearchStartDate.getDate() + 2);
+function addMonthsClamped(date, months) {
+  const targetMonthIndex = date.getMonth() + months;
+  const targetYear = date.getFullYear() + Math.floor(targetMonthIndex / 12);
+  const targetMonth = ((targetMonthIndex % 12) + 12) % 12;
+  const lastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
+  return new Date(targetYear, targetMonth, Math.min(date.getDate(), lastDay));
 }
+const latestAllowedSearchStartDate = addMonthsClamped(todayDate, 6);
+let sdpView = new Date(earliestSearchStartDate.getFullYear(), earliestSearchStartDate.getMonth(), 1);
+let selectedSearchStartDate = null;
+
+function latestSearchStartDate() {
+  return latestAllowedSearchStartDate;
+}
+
 function clearSearchStart() {
   selectedSearchStartDate = null;
   sdpValue.value = '';
@@ -1496,7 +1624,7 @@ function clearSearchStart() {
 }
 function updateSearchStartBound() {
   const latest = latestSearchStartDate();
-  sdpInput.disabled = !latest || latest < todayDate;
+  sdpInput.disabled = !latest || latest < earliestSearchStartDate;
   if (selectedSearchStartDate && (!latest || selectedSearchStartDate > latest)) clearSearchStart();
 }
 function renderSearchStartCalendar() {
@@ -1518,10 +1646,10 @@ function renderSearchStartCalendar() {
   for (let d = 1; d <= daysInMonth; d++) {
     const date = new Date(sdpView.getFullYear(), sdpView.getMonth(), d);
     const cell = document.createElement('div'); cell.className = 'cal-day'; cell.textContent = d;
-    if (!latest || date < todayDate || date > latest) cell.classList.add('disabled');
+    if (!latest || date < earliestSearchStartDate || date > latest) cell.classList.add('disabled');
     if (sameDay(date, todayDate)) cell.classList.add('today');
     if (sameDay(date, selectedSearchStartDate)) cell.classList.add('selected');
-    if (latest && date >= todayDate && date <= latest) cell.addEventListener('click', (e) => {
+    if (latest && date >= earliestSearchStartDate && date <= latest) cell.addEventListener('click', (e) => {
       e.stopPropagation(); selectedSearchStartDate = date; sdpValue.value = isoOf(date); sdpInput.value = fmtDate(date);
       clearSearchStartDate.classList.add('visible'); closeSearchStartCalendar();
     });
@@ -1538,6 +1666,8 @@ clearSearchStartDate.addEventListener('click', (e) => { e.stopPropagation(); cle
 updateSearchStartBound();
 
 renderSelected();
+
+setSearchMode(searchMode);
 
 if (EXISTING_CONFIG) {
   loginMethodSelect.value = EXISTING_CONFIG.login_method || 'mobywatel';
@@ -1592,7 +1722,8 @@ if (EXISTING_CONFIG) {
     const parts = EXISTING_CONFIG.search_start_date.split('-').map(Number);
     if (parts.length === 3 && parts.every((n) => !Number.isNaN(n))) {
       const configuredDate = new Date(parts[0], parts[1] - 1, parts[2]);
-      if (configuredDate >= todayDate && configuredDate <= searchHorizonDate) {
+      const latest = latestSearchStartDate();
+      if (configuredDate >= earliestSearchStartDate && latest && configuredDate <= latest) {
         selectedSearchStartDate = configuredDate;
         sdpValue.value = EXISTING_CONFIG.search_start_date;
         sdpInput.value = fmtDate(configuredDate);
@@ -1619,10 +1750,8 @@ if (EXISTING_CONFIG) {
 }
 
 window.addEventListener('ikw-language-changed', () => {
-  centerLabelHeading.textContent = ikwI18n.lang() === 'pl'
-    ? `Ośrodki WORD do obserwowania (${CENTERS.length} w kraju)`
-    : `WORD centers to watch (${CENTERS.length} nationwide)`;
-  renderSelected();
+  centerLabelHeading.textContent = t(`WORD centers to watch (${CENTERS.length} nationwide)`);
+  setSearchMode(searchMode);
   updatePollIntervalDisplay();
   updateTimeWindow();
   renderCalendar();
@@ -1688,7 +1817,14 @@ document.getElementById('form').addEventListener('submit', async (e) => {
 
     const orgIds = Array.from(selectedIds);
     if (!orgIds.length) throw new Error(t('Pick at least one WORD center.'));
-    if (orgIds.length > MAX_CENTERS) throw new Error(`Pick at most ${MAX_CENTERS} WORD centers — the site's search only accepts ${MAX_CENTERS} at a time.`);
+
+    if (searchMode === 'single' && orgIds.length !== 1) {
+      throw new Error(t('Single-center mode requires exactly one WORD center.'));
+    }
+
+    if (searchMode === 'multi' && orgIds.length > MAX_CENTERS) {
+      throw new Error(`Pick at most ${MAX_CENTERS} WORD centers — the site's search only accepts ${MAX_CENTERS} at a time.`);
+    }
 
     const profileNumber = pkkInput.value.trim();
     if (!profileNumber) throw new Error(t('PKK number is required.'));
@@ -1705,6 +1841,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
       pz_password: document.getElementById('settings-pz-password').value,
       profile_number: profileNumber,
       organization_ids: orgIds,
+      search_mode: searchMode,
       category: category,
       exam_types: examTypes,
       current_slot_date: currentSlotDate,

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Notification-only slot checker for info-kierowca.pl.
 
-Never books or reserves anything. Reads two endpoints only:
+Never books or reserves anything. Reads these endpoints only:
   - GET  /bknd/auth/api/v1/jwt/refresh                       (keep session alive)
   - POST /bknd/exam/api/v1/Schedules/user/MultipleCentersExams (read slot data)
+  - POST /bknd/exam/api/v1/Schedules/user/OneCenterExam
 """
 import argparse
 import functools
@@ -79,6 +80,10 @@ PZ_PROACTIVE_RELOGIN_LEAD_SECONDS = 5 * 60
 # instead of becoming relatively bigger at short intervals and negligible at
 # long ones.
 POLL_JITTER_FRACTION = 0.15
+RATE_LIMIT_MAX_SEARCHES = 10
+RATE_LIMIT_WINDOW_SECONDS = 60 * 60
+RATE_LIMIT_SAFETY_SECONDS = 5
+
 
 
 # Cached: word_centers.json is static data shipped with the code, never
@@ -87,13 +92,20 @@ POLL_JITTER_FRACTION = 0.15
 # common case). Callers copy the list via a comprehension before shuffling, so
 # the cached list itself is never mutated.
 @functools.lru_cache(maxsize=1)
-def load_word_center_ids():
+
+def load_word_centers():
     try:
         with open(WORD_CENTERS_FILE, encoding="utf-8") as f:
-            return [c["id"] for c in json.load(f)]
-    except (OSError, json.JSONDecodeError, KeyError):
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
         return []
 
+def load_word_center_ids():
+    return [
+        c["id"]
+        for c in load_word_centers()
+        if "id" in c
+    ]
 
 def build_search_organization_ids(config):
     """Pad the configured centers to exactly SEARCH_ORG_ID_COUNT for the search call."""
@@ -104,31 +116,35 @@ def build_search_organization_ids(config):
     random.shuffle(filler_pool)
     return wanted + filler_pool[: SEARCH_ORG_ID_COUNT - len(wanted)]
 
-# The site itself won't show slots further out than this, so there's no
-# benefit to making it configurable — it's a hard line on info-kierowca.pl,
-# not a user preference.
-MAX_DAYS_AHEAD = 31
+# info-kierowca.pl currently allows the search start date from two days
+# ahead. The Settings UI and app-side validation additionally cap selection
+# at six calendar months ahead, matching the site's date picker. The poller
+# must not silently rewrite a valid saved startDate to an older date.
+SEARCH_START_MIN_DAYS_AHEAD = 2
 
 
 def search_start_date(value, *, today=None):
-    """Return the safe lower search bound for a config value.
+    """Return the configured lower search bound without a 31-day clamp.
 
-    This is intentionally separate from ``current_slot_date``: it selects
-    which available dates are worth considering, rather than deciding whether
-    a slot improves the user's existing booking. Missing or malformed values
-    preserve the historical behaviour of searching from today.
+    Invalid/missing legacy values fall back to the site's earliest selectable
+    start date (today + 2 days). Valid values are never silently moved
+    backwards; app.build_config() owns the six-month validation.
     """
     today = today or date.today()
-    horizon = today + timedelta(days=MAX_DAYS_AHEAD)
+    minimum = today + timedelta(days=SEARCH_START_MIN_DAYS_AHEAD)
+
     if not value:
-        return today
+        return minimum
+
     try:
         parsed = date.fromisoformat(value) if isinstance(value, str) else None
     except ValueError:
         parsed = None
+
     if parsed is None:
-        return today
-    return min(max(parsed, today), horizon)
+        return minimum
+
+    return max(parsed, minimum)
 
 class _PrivateRotatingFileHandler(logging.handlers.RotatingFileHandler):
     """chmod 0600 the log file every time it's (re)opened.
@@ -297,6 +313,81 @@ def exam_slot_fields(exam, exam_type):
     return exam.get(dt_field), exam.get(places_field)
 
 
+def parse_multi_center_hits(results, config, lower_date, now):
+    """Parse MultipleCentersExams response without a local 31-day cap."""
+    wanted_types = set(config["exam_types"])
+    watch_ids = set(config["organization_ids"])
+    earliest_hour = config.get("earliest_slot_hour", 0)
+    latest_hour = config.get("latest_slot_hour", 24)
+
+    hits = []
+
+    for word in results:
+        if word.get("wordId") not in watch_ids:
+            continue
+
+        for exam in word.get("examCollectionForDay", []):
+            exam_type = exam.get("examType")
+            if exam_type not in wanted_types:
+                continue
+
+            dt_str, places = exam_slot_fields(exam, exam_type)
+            if not dt_str:
+                continue
+
+            dt = datetime.fromisoformat(dt_str)
+
+            if (
+                lower_date <= dt.date()
+                and earliest_hour <= dt.hour < latest_hour
+            ):
+                hits.append(
+                    (word.get("wordName"), exam_type, dt, places)
+                )
+
+    return hits
+
+
+def parse_single_center_hits(result, config, lower_date):
+    """Parse OneCenterExam response.
+
+    Unlike MultipleCentersExams, OneCenterExam returns one top-level object.
+    Its examCollectionForDay contains day objects whose examCollections hold
+    the actual exam records. No 31-day upper limit is applied here.
+    """
+    wanted_types = set(config["exam_types"])
+    earliest_hour = config.get("earliest_slot_hour", 0)
+    latest_hour = config.get("latest_slot_hour", 24)
+
+    hits = []
+
+    for day in result.get("examCollectionForDay", []):
+        for exam in day.get("examCollections", []):
+            word_name = (
+                exam.get("organizationName")
+                or f"WORD #{config['organization_ids'][0]}"
+            )
+            exam_type = exam.get("examType")
+            if exam_type not in wanted_types:
+                continue
+
+            dt_str, places = exam_slot_fields(exam, exam_type)
+            if not dt_str:
+                continue
+
+            dt = datetime.fromisoformat(dt_str)
+
+            if (
+                lower_date <= dt.date()
+                and earliest_hour <= dt.hour < latest_hour
+            ):
+                hits.append(
+                    (word_name, exam_type, dt, places)
+                )
+
+    return hits
+
+
 def is_urgent(fastest_dt, config):
     """Whether fastest_dt is strictly before the date of the user's current
     slot — a different time on the same day does not count as urgent.
@@ -403,6 +494,120 @@ def should_proactively_relogin(config, captured_at, *, now=None):
     return 0 < remaining <= PZ_PROACTIVE_RELOGIN_LEAD_SECONDS
 
 
+def _header_value(headers, name):
+    """Return one response header case-insensitively, or None."""
+    if headers is None:
+        return None
+    try:
+        return headers.get(name)
+    except Exception:
+        return None
+
+
+def _parse_rate_limit_reset(headers):
+    """Parse x-ratelimit-reset as a Unix timestamp when the server sends it."""
+    raw = _header_value(headers, "x-ratelimit-reset")
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    # Milliseconds are tolerated defensively even though the observed API uses seconds.
+    if value > 10_000_000_000:
+        value /= 1000.0
+    return value if value > 0 else None
+
+
+def _parse_retry_after(headers, now_ts=None):
+    """Return an absolute Unix timestamp from Retry-After, if usable."""
+    raw = _header_value(headers, "Retry-After")
+    if raw is None:
+        return None
+    if now_ts is None:
+        now_ts = time.time()
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return now_ts + seconds if seconds >= 0 else None
+
+
+def _spots_label(count):
+    """Return an English slot-count label for logs and push notifications."""
+    return f"{count} {'spot' if count == 1 else 'spots'}"
+
+
+def _rate_limit_log_fields(headers):
+    return (
+        _header_value(headers, "x-ratelimit-limit"),
+        _header_value(headers, "x-ratelimit-remaining"),
+        _header_value(headers, "x-ratelimit-reset"),
+        _header_value(headers, "Retry-After"),
+    )
+
+
+def _successful_search_times(dash_status, now_ts=None):
+    """Keep only accepted searches still relevant to the rolling 60-minute window."""
+    if now_ts is None:
+        now_ts = time.time()
+    cutoff = now_ts - RATE_LIMIT_WINDOW_SECONDS
+    values = []
+    for value in dash_status.get("successful_search_times", []):
+        try:
+            ts = float(value)
+        except (TypeError, ValueError):
+            continue
+        if ts > cutoff:
+            values.append(ts)
+    values.sort()
+    return values[-RATE_LIMIT_MAX_SEARCHES:]
+
+
+def _record_successful_search(dash_status, now_ts=None):
+    if now_ts is None:
+        now_ts = time.time()
+    values = _successful_search_times(dash_status, now_ts)
+    values.append(now_ts)
+    dash_status["successful_search_times"] = values[-RATE_LIMIT_MAX_SEARCHES:]
+    dash_status["last_successful_search"] = datetime.fromtimestamp(now_ts).isoformat()
+    dash_status["rate_limit_until"] = None
+
+
+def _calculate_rate_limit_until(dash_status, headers, now_ts=None):
+    """Calculate when search may resume after HTTP 429.
+
+    Server-provided timing is authoritative.  When both x-ratelimit-reset and
+    Retry-After are usable, wait until the later of the two and add a small
+    safety margin.  The locally recorded accepted-search timestamps are used
+    only as a fallback when the server provides no usable resume information.
+    """
+    if now_ts is None:
+        now_ts = time.time()
+
+    server_candidates = []
+
+    server_reset = _parse_rate_limit_reset(headers)
+    if server_reset and server_reset > now_ts:
+        server_candidates.append(server_reset)
+
+    retry_after = _parse_retry_after(headers, now_ts)
+    if retry_after and retry_after > now_ts:
+        server_candidates.append(retry_after)
+
+    if server_candidates:
+        return max(server_candidates) + RATE_LIMIT_SAFETY_SECONDS
+
+    # Fallback only: preserve the local accepted-search history for cases where
+    # the server omits both usable rate-limit timing headers.
+    values = _successful_search_times(dash_status, now_ts)
+    dash_status["successful_search_times"] = values
+    if len(values) >= RATE_LIMIT_MAX_SEARCHES:
+        return values[0] + RATE_LIMIT_WINDOW_SECONDS + RATE_LIMIT_SAFETY_SECONDS
+
+    return now_ts + RATE_LIMIT_WINDOW_SECONDS + RATE_LIMIT_SAFETY_SECONDS
+
+
 def run_check(logger, dash_status):
     """Note: pausing/resuming itself is applied instantly by the app module's
     /pause and /resume handlers (they write dash_status/status.json
@@ -479,6 +684,7 @@ def run_check(logger, dash_status):
     if should_proactively_relogin(config, captured_at):
         logger.info("outcome=proactive_relogin detail=session_expiring_soon")
         auth_launch.trigger_auto_refresh(logger, config)
+        return
 
     # 1. Keep the session alive.
     status, body, _headers = client.do_request(client.REFRESH_URL, session, method="GET")
@@ -509,79 +715,199 @@ def run_check(logger, dash_status):
         update_status(dash_status, "unexpected", f"Refresh call returned {status}")
         return
 
-    # 2. Search for slots. The API gets this lower bound, and the local filter
-    # below applies it again in case the endpoint returns an older slot.
+    # 2. Search for slots.
+    #
+    # single -> OneCenterExam: exactly one configured WORD.
+    # multi  -> MultipleCentersExams: pad to exactly 5 WORD ids.
+    # Neither mode applies the former short local start-date/result clamp.
+    # A real HTTP 429 pauses only the search endpoint.  Refresh above may still
+    # keep the authenticated session healthy while we wait for the rolling
+    # 10-per-hour search window to free a slot.
+    now_ts = time.time()
+    rate_limit_until = dash_status.get("rate_limit_until")
+    try:
+        rate_limit_until = float(rate_limit_until) if rate_limit_until else None
+    except (TypeError, ValueError):
+        rate_limit_until = None
+    if rate_limit_until and now_ts < rate_limit_until:
+        resume_iso = datetime.fromtimestamp(rate_limit_until).isoformat()
+        update_status(
+            dash_status,
+            "rate_limited",
+            "Search rate limit reached",
+        )
+        dash_status["rate_limit_until"] = rate_limit_until
+        save_status(dash_status)
+        logger.info("outcome=rate_limited stage=search resume_at=%s", resume_iso)
+        return
+    if rate_limit_until:
+        dash_status["rate_limit_until"] = None
+
     now = datetime.now()
-    lower_date = search_start_date(config.get("search_start_date"), today=now.date())
-    payload = {
-        "startDate": lower_date.isoformat(),
-        "organizationId": build_search_organization_ids(config),
-        "category": config["category"],
-        "profileNumber": config["profile_number"],
-        "profileType": "Pkk",
-    }
-    status, body, _headers = client.do_request(
-        client.SEARCH_URL, session, method="POST", json_body=payload
+    search_mode = config.get("search_mode", "multi")
+
+    if search_mode not in ("single", "multi"):
+        search_mode = "multi"
+
+    lower_date = search_start_date(
+        config.get("search_start_date"),
+        today=now.date(),
+    )
+
+    if search_mode == "single":
+        organization_ids = list(dict.fromkeys(config["organization_ids"]))
+
+        if len(organization_ids) != 1:
+            logger.info(
+                "outcome=setup_incomplete detail=single_mode_requires_one_center"
+            )
+            update_status(
+                dash_status,
+                "setup_incomplete",
+                "Single-center mode requires exactly one WORD center",
+            )
+            return
+
+        payload = {
+            "startDate": lower_date.isoformat(),
+            "organizationId": [organization_ids[0]],
+            "category": config["category"],
+            "profileNumber": config["profile_number"],
+            "profileType": "Pkk",
+        }
+
+        search_url = client.ONE_CENTER_EXAM_URL
+
+    else:
+        payload = {
+            "startDate": lower_date.isoformat(),
+            "organizationId": build_search_organization_ids(config),
+            "category": config["category"],
+            "profileNumber": config["profile_number"],
+            "profileType": "Pkk",
+        }
+
+        search_url = client.SEARCH_URL
+
+    status, body, search_headers = client.do_request(
+        search_url,
+        session,
+        method="POST",
+        json_body=payload,
     )
 
     if status is None:
-        # Never reached the server — see the matching branch in the refresh
-        # stage above. Log and retry next tick rather than alerting.
         detail = body[:200].decode(errors="replace") if body else ""
-        logger.info("outcome=network_error stage=search detail=%r", detail)
-        update_status(dash_status, "network_error", "Can't reach info-kierowca.pl — will retry")
+        logger.info(
+            "outcome=network_error stage=search detail=%r",
+            detail,
+        )
+        update_status(
+            dash_status,
+            "network_error",
+            "Can't reach info-kierowca.pl — will retry",
+        )
         return
-    # 500 is in the auth set here too (see the refresh stage above): a 500
-    # from the search endpoint has in practice always turned out to be the
-    # same underlying cookie expiry. See docs/ADVANCED.md's auto-relogin note.
+
     if status in (401, 403, 500):
-        _handle_auth_expired(logger, dash_status, config, status, "search")
+        _handle_auth_expired(
+            logger,
+            dash_status,
+            config,
+            status,
+            "search",
+        )
         return
-    if status != 200:
-        # 5xx included: transient upstream errors are not an expired session.
+
+    if status == 429:
         detail = body[:200].decode(errors="replace") if body else ""
-        logger.info("outcome=unexpected status=%s stage=search detail=%r", status, detail)
-        update_status(dash_status, "unexpected", f"Search call returned {status}")
+        limit, remaining, reset, retry_after = _rate_limit_log_fields(search_headers)
+        resume_at = _calculate_rate_limit_until(dash_status, search_headers)
+        dash_status["rate_limit_until"] = resume_at
+        logger.info(
+            "outcome=rate_limited status=429 stage=search detail=%r "
+            "limit=%r remaining=%r reset=%r retry_after=%r resume_at=%s",
+            detail, limit, remaining, reset, retry_after,
+            datetime.fromtimestamp(resume_at).isoformat(),
+        )
+        update_status(dash_status, "rate_limited", "Search rate limit reached")
+        # update_status intentionally preserves current_hits: 429 says nothing
+        # about whether the last successfully observed slots still exist.
+        dash_status["rate_limit_until"] = resume_at
+        save_status(dash_status)
         return
+
+    if status != 200:
+        detail = body[:200].decode(errors="replace") if body else ""
+        logger.info(
+            "outcome=unexpected status=%s stage=search detail=%r",
+            status,
+            detail,
+        )
+        update_status(
+            dash_status,
+            "unexpected",
+            f"Search call returned {status}",
+        )
+        return
+
+    # HTTP 200 consumed one accepted search request even if its JSON later turns
+    # out to be malformed, so record it before parsing.
+    _record_successful_search(dash_status)
+    limit, remaining, reset, retry_after = _rate_limit_log_fields(search_headers)
+    logger.info(
+        "outcome=search_rate_limit status=200 limit=%r remaining=%r reset=%r retry_after=%r",
+        limit, remaining, reset, retry_after,
+    )
 
     try:
         results = json.loads(body)
-        assert isinstance(results, list)
-    except Exception:
+
+        if search_mode == "single":
+            if not isinstance(results, dict):
+                raise ValueError("OneCenterExam response is not an object")
+
+            hits = parse_single_center_hits(
+                results,
+                config,
+                lower_date,
+            )
+
+        else:
+            if not isinstance(results, list):
+                raise ValueError(
+                    "MultipleCentersExams response is not a list"
+                )
+
+            hits = parse_multi_center_hits(
+                results,
+                config,
+                lower_date,
+                now,
+            )
+
+    except Exception as exc:
         detail = body[:200].decode(errors="replace") if body else ""
-        logger.info("outcome=unparseable status=%s detail=%r", status, detail)
+        logger.info(
+            "outcome=unparseable status=%s mode=%s error=%r detail=%r",
+            status,
+            search_mode,
+            exc,
+            detail,
+        )
         notify(
             "info-kierowca: unexpected response shape",
             "Search response wasn't the expected JSON — CAPTCHA? layout change? check manually",
             "critical",
         )
-        update_status(dash_status, "unexpected", "Response wasn't the expected JSON shape")
+        update_status(
+            dash_status,
+            "unexpected",
+            "Response wasn't the expected JSON shape",
+        )
         return
 
     save_json(SESSION_FILE, session)
-
-    max_date = now + timedelta(days=MAX_DAYS_AHEAD)
-    wanted_types = set(config["exam_types"])
-    watch_ids = set(config["organization_ids"])
-    # Hour-of-day preference (wizard's dual-handle slider) — [earliest, latest)
-    # against dt.hour, so a config predating this feature (both keys absent)
-    # defaults to the full day and filters nothing.
-    earliest_hour = config.get("earliest_slot_hour", 0)
-    latest_hour = config.get("latest_slot_hour", 24)
-    hits = []
-    for word in results:
-        if word.get("wordId") not in watch_ids:
-            continue
-        for exam in word.get("examCollectionForDay", []):
-            exam_type = exam.get("examType")
-            if exam_type not in wanted_types:
-                continue
-            dt_str, places = exam_slot_fields(exam, exam_type)
-            if not dt_str:
-                continue
-            dt = datetime.fromisoformat(dt_str)
-            if lower_date <= dt.date() and dt <= max_date and earliest_hour <= dt.hour < latest_hour:
-                hits.append((word.get("wordName"), exam_type, dt, places))
 
     hits.sort(key=lambda h: h[2])
     hit_dicts = [
@@ -592,8 +918,11 @@ def run_check(logger, dash_status):
     if hits:
         exam_labels = {"Theoretical": "theory", "Practice": "practice"}
         lines = [
-            "{} — {} · {} spots ({})".format(
-                w, dt.strftime("%a %d %b %Y, %H:%M"), n, exam_labels.get(t, t)
+            "{} — {} · {} ({})".format(
+                w,
+                dt.strftime("%a %d %b %Y, %H:%M"),
+                _spots_label(n),
+                exam_labels.get(t, t),
             )
             for w, t, dt, n in hits
         ]
@@ -604,10 +933,10 @@ def run_check(logger, dash_status):
         if urgent:
             if push_signature(fastest) != dash_status.get("last_push_signature"):
                 if config.get("phone_alerts", True):
-                    push_body = "{} · {} · {} spots".format(
+                    push_body = "{} · {} · {}".format(
                         datetime.fromisoformat(fastest["datetime"]).strftime("%a %d %b, %H:%M"),
                         short_word(fastest["word"]),
-                        fastest["places"],
+                        _spots_label(fastest["places"]),
                     )
                     push_ntfy(
                         logger,

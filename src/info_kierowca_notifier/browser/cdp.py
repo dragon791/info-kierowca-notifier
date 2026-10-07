@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 
 from info_kierowca_notifier.paths import CONFIG_DIR, SESSION_FILE
 
-COOKIE_NAMES = {"__Secure-PUDOJT", "__Secure-PUDOJTMD"}
+COOKIE_NAMES = {"__Secure-PUDOJT", "__Secure-PUDOJTMD", "__Host-Http-PUDO-DeviceId"}
 DOMAIN_SUFFIX = "info-kierowca.pl"
 
 

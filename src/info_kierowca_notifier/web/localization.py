@@ -16,6 +16,9 @@ LOCALIZATION_SCRIPT = r"""
     'PKK number': 'Numer PKK', 'License category': 'Kategoria prawa jazdy', 'More categories': 'Więcej kategorii',
     'Fewer categories': 'Mniej kategorii', 'Use my PKK profile instead': 'Użyj mojego profilu PKK',
     'Exam type': 'Rodzaj egzaminu', 'Theoretical': 'Teoretyczny', 'Practical': 'Praktyczny',
+    'Search mode': 'Tryb wyszukiwania', 'Single center': 'Jeden ośrodek', 'Multiple centers': 'Wiele ośrodków',
+    'All dates made available by the selected WORD': 'Wszystkie terminy udostępnione przez wybrany WORD', 'Up to 5 centers': 'Do 5 ośrodków',
+    'Single-center mode — searching all available dates.': 'Tryb pojedynczego ośrodka — wyszukiwanie wszystkich dostępnych terminów.',
     'Alerts': 'Powiadomienia', 'Automation': 'Automatyzacja', 'WORD centers to watch (__CENTER_COUNT__ nationwide)': 'Ośrodki WORD do obserwowania (__CENTER_COUNT__ w kraju)',
     'Click to browse all centers, or type to filter...': 'Kliknij, aby przeglądać ośrodki, lub wpisz tekst, aby filtrować...',
     'Date of your current booked slot — a found slot on an earlier date beats this and triggers the alerts below': 'Data obecnie zarezerwowanego terminu — wolny termin wcześniejszy niż ten uruchomi poniższe powiadomienia',
@@ -65,16 +68,18 @@ LOCALIZATION_SCRIPT = r"""
     'Required: date of the booking to reschedule': 'Wymagane: data rezerwacji do zmiany terminu',
     'Enter the date of the existing booking that you want the app to reschedule.': 'Wpisz datę istniejącej rezerwacji, której termin aplikacja ma zmienić.',
     'Earliest acceptable exam date (optional)': 'Najwcześniejsza akceptowalna data egzaminu (opcjonalnie)',
-    'Ignore slots before this date. Leave blank to search from today; the site searches at most 31 days ahead.': 'Pomiń terminy przed tą datą. Pozostaw puste, aby szukać od dziś; strona wyszukuje najwyżej 31 dni do przodu.',
+    'Earliest search date: from 2 days from today up to 6 months ahead.': 'Najwcześniejsza data wyszukiwania: od 2 dni od dzisiaj do 6 miesięcy naprzód.',
     'Clear earliest acceptable date': 'Wyczyść najwcześniejszą akceptowalną datę',
     'Open browser': 'Otwórz przeglądarkę', 'Quit': 'Zakończ', 'Get new session': 'Pobierz nową sesję',
     'Paused': 'Wstrzymano', 'Click to resume': 'Kliknij, aby wznowić', 'Click to pause': 'Kliknij, aby wstrzymać',
-    'Dashboard lost contact with the notifier': 'Panel utracił połączenie z programem', 'spots': 'miejsc',
+    'Dashboard lost contact with the notifier': 'Panel utracił połączenie z programem', 'spots': 'miejsc', 'Available now': 'Dostępne teraz', 'Last confirmed available slots': 'Ostatnio potwierdzone dostępne terminy',
+    'Rate limit reached': 'Osiągnięto limit wyszukiwań', 'Last successful search': 'Ostatnie prawidłowe wyszukiwanie',
+    'The slots below are from the last successful search and may no longer be current.': 'Poniższe terminy pochodzą z ostatniego prawidłowego wyszukiwania i mogą być już nieaktualne.',
     'Log back in via browser and update session.json': 'Zaloguj się ponownie w przeglądarce i zaktualizuj session.json',
     "Can't reach info-kierowca.pl — will retry": 'Nie można połączyć się z info-kierowca.pl — ponowna próba nastąpi automatycznie',
     'Unexpected response — check manually': 'Nieoczekiwana odpowiedź — sprawdź ręcznie', 'Last checked': 'Ostatnie sprawdzenie',
     'No checks yet': 'Brak sprawdzeń', 'Session expires in': 'Sesja wygaśnie za', 'min': 'min',
-    'no slots in the next 31 days': 'brak terminów w ciągu najbliższych 31 dni', 'Next check in': 'Następne sprawdzenie za',
+    'No available slots found': 'Brak dostępnych terminów', 'Next check in': 'Następne sprawdzenie za',
     'Sending...': 'Wysyłanie...', 'Sent — check your phone.': 'Wysłano — sprawdź telefon.', 'Failed to send.': 'Nie udało się wysłać.',
     'Could not reach ntfy. Check your network connection.': 'Nie można połączyć się z ntfy. Sprawdź połączenie z internetem.',
     'TLS certificate verification failed. Check your system trust settings.': 'Weryfikacja certyfikatu TLS nie powiodła się. Sprawdź ustawienia zaufanych certyfikatów systemu.',
@@ -108,13 +113,13 @@ LOCALIZATION_SCRIPT = r"""
     "This lets the app automatically click through and submit a real reservation date change the moment it finds a matching slot — no review step, and it can't be undone by closing the browser. Are you sure?": 'To pozwala programowi automatycznie przejść dalej i wysłać rzeczywistą zmianę daty rezerwacji po znalezieniu pasującego terminu — bez etapu sprawdzania i bez możliwości cofnięcia przez zamknięcie przeglądarki. Czy na pewno chcesz kontynuować?',
     'Invalid request.': 'Nieprawidłowe żądanie.', 'Notification topic is required': 'Temat powiadomień jest wymagany',
     'PKK number is required': 'Numer PKK jest wymagany', 'Pick at least one WORD center': 'Wybierz co najmniej jeden ośrodek WORD',
+    'Choose a supported search mode': 'Wybierz obsługiwany tryb wyszukiwania', 'Single-center mode requires exactly one WORD center': 'Tryb jednego ośrodka wymaga wybrania dokładnie jednego ośrodka WORD',
     'WORD center IDs must be numeric IDs': 'Identyfikatory ośrodków WORD muszą być liczbami', 'Pick at least one exam type': 'Wybierz co najmniej jeden rodzaj egzaminu',
     'Category must be a number': 'Kategoria musi być liczbą', 'Check frequency must be a number': 'Częstotliwość sprawdzania musi być liczbą',
     'Preferred time window must be numbers': 'Preferowany przedział godzin musi zawierać liczby', 'Preferred time window must be a valid range between 00:00 and 24:00': 'Preferowany przedział godzin musi być poprawnym zakresem od 00:00 do 24:00',
     'Current slot date is required': 'Data obecnego terminu jest wymagana', 'Current slot date must be a date like 2026-09-14': 'Data obecnego terminu musi mieć format 2026-09-14',
     'Earliest acceptable exam date must be a date like 2026-09-14': 'Najwcześniejsza akceptowalna data egzaminu musi mieć format 2026-09-14',
-    'Earliest acceptable exam date must be within the next 31 days': 'Najwcześniejsza akceptowalna data egzaminu musi przypadać w ciągu najbliższych 31 dni',
-    'Earliest acceptable exam date must be before the current booking date': 'Najwcześniejsza akceptowalna data egzaminu musi przypadać przed datą obecnej rezerwacji',
+    'Earliest acceptable exam date must be at least 2 days from today': 'Najwcześniejsza akceptowalna data egzaminu musi przypadać co najmniej 2 dni od dzisiaj', 'Earliest acceptable exam date must be within the next 6 months': 'Najwcześniejsza akceptowalna data egzaminu musi przypadać w ciągu najbliższych 6 miesięcy',
     'Something went wrong.': 'Coś poszło nie tak.', 'Could not reach the app.': 'Nie można połączyć się z programem.',
     'Paused — checking will stop until you resume.': 'Wstrzymano — sprawdzanie nie będzie działać do momentu wznowienia.', 'Resumed checking.': 'Wznowiono sprawdzanie.',
     'Toggle pause': 'Przełącz wstrzymanie', 'No notification topic set yet.': 'Nie ustawiono jeszcze tematu powiadomień.',
@@ -135,12 +140,19 @@ LOCALIZATION_SCRIPT = r"""
     'Chrome failed to launch — check the log.': 'Chrome nie zostało uruchomione — sprawdź dziennik.',
     'No Chrome, Edge, or other Chromium-based browser was found on this machine — install one to continue.': 'Na tym komputerze nie znaleziono Chrome, Edge ani innej przeglądarki opartej na Chromium — zainstaluj ją, aby kontynuować.',
     'No Chrome, Edge, or other Chromium-based browser was found on this machine. Install one and try again.': 'Na tym komputerze nie znaleziono Chrome, Edge ani innej przeglądarki opartej na Chromium. Zainstaluj ją i spróbuj ponownie.',
-    'Session expired': 'Sesja wygasła', 'Offline': 'Offline', "Something's wrong": 'Coś poszło nie tak', 'No slots in the next 31 days': 'Brak terminów w ciągu najbliższych 31 dni', 'Waiting for first check…': 'Oczekiwanie na pierwsze sprawdzenie…', 'Checking any moment now…': 'Sprawdzenie nastąpi za chwilę…',
+    'Session expired': 'Sesja wygasła', 'Offline': 'Offline', "Something's wrong": 'Coś poszło nie tak', 'Waiting for first check…': 'Oczekiwanie na pierwsze sprawdzenie…', 'Checking any moment now…': 'Sprawdzenie nastąpi za chwilę…',
     'Session expired — manual retry required': 'Sesja wygasła — wymagane ręczne ponowienie',
     'Automatic login is paused after repeated failures — open Settings and click "Get new session now."': 'Automatyczne logowanie jest wstrzymane po kilku nieudanych próbach — otwórz Ustawienia i kliknij „Pobierz nową sesję teraz”.',
   };
   const originals = new WeakMap();
   function lang() { return localStorage.getItem(KEY) === 'pl' ? 'pl' : 'en'; }
+  function places(count) {
+    const n = Number(count);
+    if (lang() !== 'pl') return `${n} ${n === 1 ? 'spot' : 'spots'}`;
+    const abs = Math.abs(n); const mod10 = abs % 10; const mod100 = abs % 100;
+    const word = n === 1 ? 'miejsce' : (mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14) ? 'miejsca' : 'miejsc');
+    return `${n} ${word}`;
+  }
   function t(text) {
     if (lang() !== 'pl') return text;
     if (PL[text]) return PL[text];
@@ -150,6 +162,16 @@ LOCALIZATION_SCRIPT = r"""
     if (match) return `Wybierz najwyżej ${match[1]} ośrodków WORD — wyszukiwarka strony przyjmuje jednocześnie tylko tyle.`;
     match = text.match(/^Check frequency must be between (\d+) and (\d+) seconds$/);
     if (match) return `Częstotliwość sprawdzania musi mieścić się między ${match[1]} a ${match[2]} sekundami.`;
+    match = text.match(/^WORD centers to watch \((\d+) nationwide\)$/);
+    if (match) return `Ośrodki WORD do obserwowania (${match[1]} w kraju)`;
+    match = text.match(/^Watching (\d+) of (\d+) centers for open slots\.$/);
+    if (match) return `Obserwujesz ${match[1]} z ${match[2]} ośrodków pod kątem wolnych terminów.`;
+    match = text.match(/^Every (.+)$/);
+    if (match) return `Co ${match[1]}`;
+    match = text.match(/^Rate limit reached — search resumes at (.+)$/);
+    if (match) return `Osiągnięto limit wyszukiwań — wznowienie o ${match[1]}`;
+    match = text.match(/^Search resumes in (.+)$/);
+    if (match) return `Wznowienie wyszukiwania za ${match[1]}`;
     return text;
   }
   function translateNode(node) {
@@ -182,7 +204,7 @@ LOCALIZATION_SCRIPT = r"""
     box.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { localStorage.setItem(KEY, b.dataset.lang); apply(); window.dispatchEvent(new Event('ikw-language-changed')); if (window.parent !== window) window.parent.postMessage({type: 'ikw-language-changed'}, window.location.origin); }));
     target.appendChild(box); apply();
   }
-  window.ikwI18n = { apply, installSwitcher, t, lang };
+  window.ikwI18n = { apply, installSwitcher, t, lang, places };
   window.addEventListener('ikw-language-changed', apply);
   document.addEventListener('DOMContentLoaded', () => {
     apply();
