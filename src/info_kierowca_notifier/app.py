@@ -130,13 +130,12 @@ def check_session_valid():
 
 def _wait_for_relogin_and_wake(prior_captured_at, wake_event):
     """Runs in a background thread after a forced relogin is launched, so
-    the dashboard's session-expiry estimate updates the moment the QR scan
-    lands instead of waiting for the poll loop's next regularly scheduled
-    cycle (up to MAX_POLL_INTERVAL_SECONDS away). Waking the loop just
-    re-runs run_check(), which recomputes session_expires_estimate from
-    session.json's fresh captured_at - same mechanism /setup already uses
-    for an interval change, so there's still only one thread ever touching
-    dash_status/status.json.
+    the dashboard/scheduler notices the fresh session without waiting for the
+    next regularly scheduled cycle (up to MAX_POLL_INTERVAL_SECONDS away).
+    The poll loop treats this Event as a state/schedule wake-up. If a SEARCH
+    was already due and is itself waiting for authentication, notifier.py
+    keeps that due-search state separately and runs it immediately after the
+    fresh captured_at appears; a wake from Settings still only reschedules.
 
     Watches for session.json's captured_at to actually change rather than
     just the auto-refresh lock clearing, since a stuck/failed relogin
@@ -781,17 +780,15 @@ class AppHandler(guard.LocalRequestGuardMixin, http.server.BaseHTTPRequestHandle
         self._send_json(200, response)
         if needs_login:
             AppHandler.logger.info("outcome=setup_complete detail=triggering_login")
-        # Wake the already-running poll loop rather than waiting for its
-        # current cycle to time out (up to the *old* poll_interval_seconds
-        # away) -- otherwise the dashboard the user's about to land on would
-        # still show whatever stale status predates this config (e.g.
-        # "Missing config.json"), and the countdown would keep counting down
-        # the interval from before this save. Waking the real loop thread
-        # (rather than spawning a second one-off run_check() here) also
-        # means there's only ever one thread touching dash_status/status.json
-        # at a time. run_check() itself calls trigger_auto_refresh() when
-        # session.json is still missing, so this covers the needs_login case
-        # too without a separate explicit call.
+        else:
+            AppHandler.logger.info(
+                "outcome=setup_complete detail=settings_saved_rescheduling_poll"
+            )
+
+        # Wake the scheduler after every successful Settings save.  The poll
+        # loop treats this as a reschedule signal: it re-reads config.json and
+        # updates next_check_at immediately, but does NOT perform a search just
+        # because the Event was signalled.
         AppHandler.wake_event.set()
 
     def _handle_test_push(self):

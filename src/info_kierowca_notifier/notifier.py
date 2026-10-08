@@ -73,13 +73,6 @@ SESSION_ESTIMATED_LIFETIME_SECONDS = 3600
 # expiry-driven because an early refresh would ask the user to scan a QR code.
 PZ_PROACTIVE_RELOGIN_LEAD_SECONDS = 5 * 60
 
-# Applied on top of the configured interval, never subtracted - so the
-# effective cadence never goes below what the user picked (or the floor
-# above). Expressed as a fraction of the interval rather than a flat number
-# of seconds, so the randomness scales with whatever interval is chosen
-# instead of becoming relatively bigger at short intervals and negligible at
-# long ones.
-POLL_JITTER_FRACTION = 0.15
 RATE_LIMIT_MAX_SEARCHES = 10
 RATE_LIMIT_WINDOW_SECONDS = 60 * 60
 RATE_LIMIT_SAFETY_SECONDS = 5
@@ -477,7 +470,26 @@ def _handle_auth_expired(logger, dash_status, config, status, stage):
             "critical",
         )
     update_status(dash_status, "auth_expired", f"Session expired during {stage}")
-    auth_launch.trigger_auto_refresh(logger, config)
+    return auth_launch.trigger_auto_refresh(logger, config)
+
+
+def _auth_wait_requested(trigger_outcome):
+    """Whether a due poll should wait for the in-flight relogin and retry.
+
+    Only an actually launched helper (or one already running) can produce a
+    fresh session shortly.  Backoff/disabled/manual-required outcomes must not
+    turn the poll loop into a tight retry loop.
+    """
+    return trigger_outcome in {
+        auth_launch.TRIGGER_LAUNCHED,
+        auth_launch.TRIGGER_ALREADY_RUNNING,
+        auth_launch.TRIGGER_MANUAL_RETRY_LAUNCHED,
+        auth_launch.TRIGGER_RESTART_LAUNCHED,
+    }
+
+
+def _auth_pending(prior_captured_at):
+    return ("auth_pending", prior_captured_at)
 
 
 def should_proactively_relogin(config, captured_at, *, now=None):
@@ -655,7 +667,9 @@ def run_check(logger, dash_status):
                 "critical",
             )
         update_status(dash_status, "auth_expired", "session.json missing")
-        auth_launch.trigger_auto_refresh(logger, config)
+        trigger_outcome = auth_launch.trigger_auto_refresh(logger, config)
+        if _auth_wait_requested(trigger_outcome):
+            return _auth_pending(None)
         return
     required_config = {"organization_ids", "category", "profile_number", "exam_types",
                        "ntfy_topic", "current_slot_date"}
@@ -683,11 +697,24 @@ def run_check(logger, dash_status):
     # and persisted retry backoff in trigger_auto_refresh().
     if should_proactively_relogin(config, captured_at):
         logger.info("outcome=proactive_relogin detail=session_expiring_soon")
-        auth_launch.trigger_auto_refresh(logger, config)
+        trigger_outcome = auth_launch.trigger_auto_refresh(logger, config)
+        if _auth_wait_requested(trigger_outcome):
+            return _auth_pending(captured_at)
         return
 
     # 1. Keep the session alive.
-    status, body, _headers = client.do_request(client.REFRESH_URL, session, method="GET")
+    status, body, refresh_headers = client.do_request(
+        client.REFRESH_URL, session, method="GET"
+    )
+    # Diagnostic only: compare the server-side quota before/after authentication
+    # without logging cookies, auth headers, response bodies or request data.
+    refresh_limit, refresh_remaining, refresh_reset, refresh_retry_after = (
+        _rate_limit_log_fields(refresh_headers)
+    )
+    logger.info(
+        "outcome=refresh_rate_limit status=%r limit=%r remaining=%r reset=%r retry_after=%r",
+        status, refresh_limit, refresh_remaining, refresh_reset, refresh_retry_after,
+    )
     if status == 204:
         save_json(SESSION_FILE, session)
         logger.info("outcome=refresh_ok status=%s", status)
@@ -696,8 +723,7 @@ def run_check(logger, dash_status):
         # server (offline, DNS, laptop lid closed). That is not an
         # "unexpected response" and must not fire a critical notification
         # every tick for the duration of an outage; the next check retries.
-        detail = body[:200].decode(errors="replace") if body else ""
-        logger.info("outcome=network_error stage=refresh detail=%r", detail)
+        logger.info("outcome=network_error stage=refresh")
         update_status(dash_status, "network_error", "Can't reach info-kierowca.pl — will retry")
         return
     elif status in (401, 403, 404, 500):
@@ -705,13 +731,16 @@ def run_check(logger, dash_status):
         # below): confirmed live 2026-07-18 that a 500 from the refresh endpoint
         # is just an expired-cookie response, not a transient upstream error, so
         # it must relogin rather than display as a generic "something's wrong".
-        _handle_auth_expired(logger, dash_status, config, status, "refresh")
+        trigger_outcome = _handle_auth_expired(
+            logger, dash_status, config, status, "refresh"
+        )
+        if _auth_wait_requested(trigger_outcome):
+            return _auth_pending(captured_at)
         return
     else:
         # Other 5xx: a transient upstream error is not an expired session,
         # and must not pop a QR window onto the user's desktop.
-        detail = body[:200].decode(errors="replace") if body else ""
-        logger.info("outcome=unexpected status=%s stage=refresh detail=%r", status, detail)
+        logger.info("outcome=unexpected status=%s stage=refresh", status)
         update_status(dash_status, "unexpected", f"Refresh call returned {status}")
         return
 
@@ -797,11 +826,7 @@ def run_check(logger, dash_status):
     )
 
     if status is None:
-        detail = body[:200].decode(errors="replace") if body else ""
-        logger.info(
-            "outcome=network_error stage=search detail=%r",
-            detail,
-        )
+        logger.info("outcome=network_error stage=search")
         update_status(
             dash_status,
             "network_error",
@@ -810,24 +835,25 @@ def run_check(logger, dash_status):
         return
 
     if status in (401, 403, 500):
-        _handle_auth_expired(
+        trigger_outcome = _handle_auth_expired(
             logger,
             dash_status,
             config,
             status,
             "search",
         )
+        if _auth_wait_requested(trigger_outcome):
+            return _auth_pending(captured_at)
         return
 
     if status == 429:
-        detail = body[:200].decode(errors="replace") if body else ""
         limit, remaining, reset, retry_after = _rate_limit_log_fields(search_headers)
         resume_at = _calculate_rate_limit_until(dash_status, search_headers)
         dash_status["rate_limit_until"] = resume_at
         logger.info(
-            "outcome=rate_limited status=429 stage=search detail=%r "
+            "outcome=rate_limited status=429 stage=search "
             "limit=%r remaining=%r reset=%r retry_after=%r resume_at=%s",
-            detail, limit, remaining, reset, retry_after,
+            limit, remaining, reset, retry_after,
             datetime.fromtimestamp(resume_at).isoformat(),
         )
         update_status(dash_status, "rate_limited", "Search rate limit reached")
@@ -838,11 +864,9 @@ def run_check(logger, dash_status):
         return
 
     if status != 200:
-        detail = body[:200].decode(errors="replace") if body else ""
         logger.info(
-            "outcome=unexpected status=%s stage=search detail=%r",
+            "outcome=unexpected status=%s stage=search",
             status,
-            detail,
         )
         update_status(
             dash_status,
@@ -887,13 +911,11 @@ def run_check(logger, dash_status):
             )
 
     except Exception as exc:
-        detail = body[:200].decode(errors="replace") if body else ""
         logger.info(
-            "outcome=unparseable status=%s mode=%s error=%r detail=%r",
+            "outcome=unparseable status=%s mode=%s error_type=%s",
             status,
             search_mode,
-            exc,
-            detail,
+            type(exc).__name__,
         )
         notify(
             "info-kierowca: unexpected response shape",
@@ -971,8 +993,64 @@ def configured_poll_interval(default=DEFAULT_POLL_INTERVAL_SECONDS):
     return min(MAX_POLL_INTERVAL_SECONDS, max(MIN_POLL_INTERVAL_SECONDS, seconds))
 
 
-def jittered_wait(interval):
-    return interval + random.uniform(0, interval * POLL_JITTER_FRACTION)
+def scheduled_wait(dash_status, interval, now_ts=None):
+    """Return the exact delay until the next poll.
+
+    The configured interval is used without jitter so the countdown is
+    predictable.  A server rate-limit cooldown is a hard lower bound: if it
+    extends beyond the configured interval, wait until rate_limit_until.
+    """
+    if now_ts is None:
+        now_ts = time.time()
+
+    rate_limit_until = dash_status.get("rate_limit_until")
+    try:
+        rate_limit_until = float(rate_limit_until) if rate_limit_until else None
+    except (TypeError, ValueError):
+        rate_limit_until = None
+
+    if rate_limit_until and rate_limit_until > now_ts:
+        return max(float(interval), rate_limit_until - now_ts)
+
+    return float(interval)
+
+
+def wait_for_auth_refresh(logger, prior_captured_at, stop_event, wake_event):
+    """Wait for a relogin that blocked an already-due poll.
+
+    Return True only when session.json was replaced with a freshly captured
+    session.  A Settings wake merely causes us to re-check state; it does not
+    cancel the due search.  If the auth helper exits without refreshing the
+    session, return False so the ordinary poll interval/backoff applies.
+    """
+    logger.info("outcome=poll_waiting_for_relogin detail=search_due")
+    # A newly spawned helper needs a brief moment to create its lock file.
+    # Without this grace period the poller can mistake "not started yet" for
+    # "already failed" and incorrectly defer the due search by a full interval.
+    launch_grace_until = time.monotonic() + 3.0
+    while not stop_event.is_set():
+        if SESSION_FILE.exists():
+            try:
+                current = load_json(SESSION_FILE).get("captured_at")
+            except Exception:
+                current = prior_captured_at
+            if current != prior_captured_at and current is not None:
+                logger.info("outcome=relogin_complete detail=running_due_search")
+                return True
+
+        if (
+            time.monotonic() >= launch_grace_until
+            and not auth_launch.auto_refresh_in_progress()
+        ):
+            logger.info("outcome=relogin_incomplete detail=due_search_deferred")
+            return False
+
+        # Wake periodically to notice the new session quickly.  Settings may
+        # also signal this Event; that must not replace/cancel the due search.
+        wake_event.wait(1.0)
+        wake_event.clear()
+
+    return False
 
 
 def loop(logger, dash_status, interval=None, stop_event=None, wake_event=None):
@@ -986,22 +1064,14 @@ def loop(logger, dash_status, interval=None, stop_event=None, wake_event=None):
     each cycle (e.g. from --interval on the CLI); once config.json has its own
     poll_interval_seconds, that value wins.
 
-    `wake_event`, if given, lets the app module's /setup handler cut the current wait
-    short the instant a new poll_interval_seconds is saved, instead of the
-    dashboard's countdown (and the actual next check) staying stuck on
-    whatever interval was configured when this cycle's wait started.
+    `wake_event` also acts as a schedule-change signal.  Waking the event does
+    not itself run a search: the wait is recalculated first.  This lets a
+    Settings change update the countdown immediately without consuming an API
+    request.
 
-    It's cleared right *before* each wait rather than right after — a save
-    that lands while run_check() is still running would otherwise survive
-    to the wait() call below unconsumed (Event.wait() returning early
-    doesn't itself clear the flag), making it return instantly and then get
-    cleared by the old post-wait clear(), triggering one wasted immediate
-    extra check even though this cycle's wait_s already reflects the fresh
-    config (configured_poll_interval() re-reads config.json every call).
-    Clearing right before wait() discards exactly that stale signal while
-    still catching a save that happens *during* the wait itself: wait()
-    returns early as intended, and the flag it leaves set is what the next
-    loop iteration's pre-wait clear() consumes.
+    While rate_limit_until is in the future it is a hard lower bound for the
+    next search.  The five-second safety margin is already included when that
+    timestamp is calculated from the server headers.
     """
     if stop_event is None:
         stop_event = threading.Event()
@@ -1010,18 +1080,47 @@ def loop(logger, dash_status, interval=None, stop_event=None, wake_event=None):
     default_interval = interval or DEFAULT_POLL_INTERVAL_SECONDS
     logger.info("outcome=loop_start interval=%s", default_interval)
     while not stop_event.is_set():
+        check_result = None
         try:
-            run_check(logger, dash_status)
+            check_result = run_check(logger, dash_status)
         except Exception:
             logger.exception("outcome=crash stage=run_check")
-        wait_s = jittered_wait(configured_poll_interval(default_interval))
-        # The exact resolved wait (post-jitter) so the dashboard's countdown
-        # can show precisely when the next check will fire instead of
-        # guessing from the base interval alone.
-        dash_status["next_check_at"] = (datetime.now() + timedelta(seconds=wait_s)).isoformat()
-        save_status(dash_status)
-        wake_event.clear()
-        wake_event.wait(wait_s)
+
+        if (
+            isinstance(check_result, tuple)
+            and len(check_result) == 2
+            and check_result[0] == "auth_pending"
+        ):
+            if wait_for_auth_refresh(
+                logger, check_result[1], stop_event, wake_event
+            ):
+                # This poll was already due. Authentication only delayed it;
+                # do not start a fresh poll interval before performing SEARCH.
+                continue
+
+        while not stop_event.is_set():
+            wait_s = scheduled_wait(
+                dash_status,
+                configured_poll_interval(default_interval),
+            )
+            # Publish the exact deadline before waiting so the dashboard
+            # immediately reflects the current schedule.
+            dash_status["next_check_at"] = (
+                datetime.now() + timedelta(seconds=wait_s)
+            ).isoformat()
+            save_status(dash_status)
+
+            wake_event.clear()
+            woke_for_reschedule = wake_event.wait(wait_s)
+            if stop_event.is_set():
+                break
+            if not woke_for_reschedule:
+                break
+
+            # Settings/auth code may wake us only to recalculate the deadline.
+            # Do not fall through to run_check() merely because the Event was
+            # signalled; read config.json again and publish a fresh countdown.
+            logger.info("outcome=poll_rescheduled detail=wake_event")
 
 
 def main():

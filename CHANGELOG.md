@@ -1,8 +1,81 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to **Info Kierowca Notifier** are documented in this file.
 
-## [2.4.0] - 2026-10-08
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [2.4.1] - 2026-10-08
+
+### Fixed
+
+#### Poll scheduling
+- Removed polling jitter so configured polling intervals are now predictable.
+- Saving Settings no longer triggers an immediate availability search.
+- Changing the polling interval now reschedules the next search from the moment the settings are saved.
+- Increasing or decreasing the polling interval correctly resets the countdown to the newly configured interval.
+
+#### Relogin and scheduled searches
+- Fixed an issue where automatic relogin could replace a scheduled availability search.
+- A search that becomes due while the session requires renewal is now kept as pending.
+- After successful relogin, a pending search is performed immediately.
+- The next polling interval starts after the delayed search is actually performed.
+- Proactive session renewal no longer causes a scheduled search to be lost.
+
+#### Rate-limit handling
+- Server-provided rate-limit timing is now authoritative.
+- `x-ratelimit-reset` and `Retry-After` are used to determine when searching may resume after HTTP 429.
+- The notifier does not perform an availability search before the server-defined resume time.
+- Current slot results are preserved while temporarily rate-limited.
+- Improved handling of server-side search quota windows.
+
+#### Search date range
+- Removed the previous local 31-day search restriction.
+- The earliest selectable search date is now today + 2 days.
+- The latest selectable search date is now today + 6 calendar months.
+- The same date-range rules are used for single-center and multi-center searches.
+- The search range is no longer restricted by the date of an existing booking.
+
+#### Dashboard
+- Improved rate-limit status and resume countdown presentation.
+- Current slots now represent only the latest successful search instead of being merged with historical results.
+- Previously retrieved slots remain visible during rate limiting with an indication that they may no longer be current.
+- Improved Polish and English localization.
+- Corrected singular/plural forms for available spots.
+- Date formatting now follows the language selected in the dashboard.
+
+### Security
+
+- Removed temporary authentication network diagnostics from the production authentication flow.
+- Removed HTTP response-body logging from request and parsing error diagnostics.
+- Authentication and rate-limit diagnostics now record only non-sensitive metadata.
+- Passwords, SMS/OTP codes, session cookies, authorization data, and PKK data are not intentionally written to application logs.
+- Authentication-related headers continue to be stripped on cross-origin redirects.
+- The dashboard remains bound to the local loopback interface.
+- Existing secure native credential-storage requirements remain enforced.
+
+### Diagnostics
+
+- Improved scheduler logging to distinguish timer rescheduling from actual availability searches.
+- Added explicit logging when a scheduled search is waiting for relogin.
+- Added logging when a pending search resumes immediately after successful relogin.
+- Added safe rate-limit diagnostics for session-refresh and availability-search requests.
+- Rate-limit diagnostics include HTTP status and available server-provided limit metadata without recording response bodies or authentication data.
+
+### Changed
+
+- Polling frequency remains user-configurable and is not artificially increased by the application.
+- Local rate-limit calculations are used only as a fallback when authoritative server timing is unavailable.
+- Session refresh is performed before an availability search and failed authentication prevents the scheduled search from being sent until authentication is restored.
+
+### Notes
+
+- Availability-search quotas and limits are controlled by `info-kierowca.pl` and may change independently of the notifier.
+- Users may configure frequent polling. If the server-side request limit is reached, the notifier waits until searching is permitted again.
+- Session renewal may temporarily delay a scheduled search; after successful renewal, the pending search is executed immediately.
+- Antivirus, SmartScreen, or other endpoint-security software may inspect newly built or downloaded executables. This is external to the notifier and is not treated as an application error.
+
+
+## [2.4.0]
 
 ### Added
 
