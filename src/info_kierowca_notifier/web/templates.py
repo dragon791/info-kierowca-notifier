@@ -774,16 +774,16 @@ WIZARD_PAGE = """<!doctype html>
         <label class="search-mode-option">
             <input type="radio" name="search_mode" value="single">
             <span>
-                <b>Single center</b>
-                <small>All dates made available by the selected WORD</small>
+                <b id="search-mode-single-title">Single center</b>
+                <small id="search-mode-single-desc">All dates made available by the selected WORD</small>
             </span>
         </label>
 
         <label class="search-mode-option">
             <input type="radio" name="search_mode" value="multi" checked>
             <span>
-                <b>Multiple centers</b>
-                <small>Up to 5 centers, searching the next 31 days</small>
+                <b id="search-mode-multi-title">Multiple centers</b>
+                <small id="search-mode-multi-desc">Up to 5 centers</small>
             </span>
         </label>
     </div>
@@ -1000,9 +1000,7 @@ document.getElementById('dismiss-booking-note').addEventListener('click', () => 
   bookingNote.hidden = true;
 });
 const centerLabelHeading = document.querySelector('label[for="center-search"]');
-centerLabelHeading.textContent = ikwI18n.lang() === 'pl'
-  ? `Ośrodki WORD do obserwowania (${CENTERS.length} w kraju)`
-  : `WORD centers to watch (${CENTERS.length} nationwide)`;
+centerLabelHeading.textContent = t(`WORD centers to watch (${CENTERS.length} nationwide)`);
 function ikwGoDashboard(type) {
   if (IKW_EMBEDDED) {
     window.parent.postMessage({ type }, window.location.origin);
@@ -1023,9 +1021,8 @@ let searchMode = EXISTING_CONFIG
   ? (EXISTING_CONFIG.search_mode || 'multi')
   : 'multi';
 
-// Remember each mode independently. 2.4.1 had only organization_ids, so use
-// that as a migration fallback; after the first 2.4.2 save both memories are
-// persisted explicitly in config.json.
+// Remember each search mode independently. Existing configs that only have
+// organization_ids use that active selection as the migration fallback.
 const legacyOrganizationIds = (EXISTING_CONFIG ? EXISTING_CONFIG.organization_ids : [])
   .filter(id => KNOWN_IDS.has(id));
 
@@ -1059,7 +1056,7 @@ function renderSelected() {
   if (!selectedIds.size) {
     const empty = document.createElement('div');
     empty.className = 'no-selection';
-    empty.textContent = 'No centers yet — search above to add one.';
+    empty.textContent = ikwI18n.t('No centers yet — search above to add one.');
     selectedList.appendChild(empty);
     centerCount.innerHTML = '';
     return;
@@ -1090,7 +1087,7 @@ function renderSelected() {
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'remove-btn';
-    removeBtn.title = 'Remove';
+    removeBtn.title = ikwI18n.t('Remove');
     removeBtn.textContent = '×';
     removeBtn.addEventListener('click', () => {
       selectedIds.delete(id);
@@ -1103,14 +1100,17 @@ function renderSelected() {
   const n = selectedIds.size;
 
   if (searchMode === 'single') {
-    centerCount.innerHTML = ikwI18n.lang() === 'pl'
-      ? `Tryb pojedynczego ośrodka — wyszukiwanie wszystkich dostępnych terminów.`
-      : `Single-center mode — searching all available dates.`;
+    centerCount.textContent = ikwI18n.t('Single-center mode — searching all available dates.');
   } else {
-    centerCount.innerHTML = ikwI18n.lang() === 'pl'
-      ? `Obserwujesz <b>${n}</b> z ${MAX_CENTERS} ośrodków pod kątem wolnych terminów.`
-      : `Watching <b>${n}</b> of ${MAX_CENTERS} centers for open slots.`;
+    centerCount.textContent = ikwI18n.t(`Watching ${n} of ${MAX_CENTERS} centers for open slots.`);
   }
+}
+
+function updateSearchModeLabels() {
+  document.getElementById('search-mode-single-title').textContent = ikwI18n.t('Single center');
+  document.getElementById('search-mode-single-desc').textContent = ikwI18n.t('All dates made available by the selected WORD');
+  document.getElementById('search-mode-multi-title').textContent = ikwI18n.t('Multiple centers');
+  document.getElementById('search-mode-multi-desc').textContent = ikwI18n.t('Up to 5 centers');
 }
 
 function setSearchMode(mode) {
@@ -1125,9 +1125,8 @@ function setSearchMode(mode) {
 
   searchMode = nextMode;
 
-  // Restore the selection that was last used in the mode we are entering.
-  // On migration from 2.4.1, use the other mode's first center as a sensible
-  // initial single-center choice if no separate single choice exists yet.
+  // Restore the last selection for the mode we are entering. For an old
+  // config with no separate memory yet, seed the missing mode sensibly.
   if (searchMode === 'single') {
     if (rememberedSingleId == null && rememberedMultiIds.length) {
       rememberedSingleId = rememberedMultiIds[0];
@@ -1146,13 +1145,8 @@ function setSearchMode(mode) {
 
   const searchStartHint = document.getElementById('search-start-hint');
 
-  searchStartHint.textContent = searchMode === 'single'
-    ? (ikwI18n.lang() === 'pl'
-        ? 'Ignoruj terminy przed tą datą. Pozostaw puste, aby szukać od dziś; w trybie pojedynczego ośrodka nie obowiązuje limit 31 dni.'
-        : 'Ignore slots before this date. Leave blank to search from today; single-center mode is not limited to 31 days.')
-    : (ikwI18n.lang() === 'pl'
-        ? 'Ignoruj terminy przed tą datą. Pozostaw puste, aby szukać od dziś; tryb wielu ośrodków przeszukuje maksymalnie 31 dni.'
-        : 'Ignore slots before this date. Leave blank to search from today; multiple-center mode searches at most 31 days.');
+  updateSearchModeLabels();
+  searchStartHint.textContent = ikwI18n.t('Earliest search date: from 2 days from today up to 6 months ahead.');
 
   updateSearchStartBound();
   renderSearchStartCalendar();
@@ -1324,7 +1318,7 @@ function fmtInterval(seconds) {
 function updatePollIntervalDisplay() {
   const seconds = POLL_INTERVAL_STEPS[Number(pollSlider.value)];
   pollIntervalHidden.value = seconds;
-  pollIntervalLabel.textContent = ikwI18n.lang() === 'pl' ? `Co ${fmtInterval(seconds)}` : `Every ${fmtInterval(seconds)}`;
+  pollIntervalLabel.textContent = t(`Every ${fmtInterval(seconds)}`);
 }
 
 function setPollIntervalSeconds(seconds) {
@@ -1631,31 +1625,28 @@ dpInput.addEventListener('click', () => { calendar.classList.contains('open') ? 
 dpInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCalendar(); });
 document.addEventListener('click', (e) => { if (!document.getElementById('datepick').contains(e.target)) closeCalendar(); });
 
-// Independent optional lower bound for eligible slots.  It deliberately uses
-// the same calendar language as the required booking date, while limiting
-// selection to the government site's known search horizon.
+// Search-start range mirrors info-kierowca.pl: from two days ahead through
+// six calendar months ahead, identically for single- and multi-center search.
+// It is deliberately independent of the user's currently booked exam date.
 const sdpInput = document.getElementById('search_start_date_display');
 const sdpValue = document.getElementById('search_start_date');
 const sdpCalendar = document.getElementById('search-start-calendar');
 const clearSearchStartDate = document.getElementById('clear-search-start-date');
-const searchHorizonDate = new Date(todayDate);
-searchHorizonDate.setDate(searchHorizonDate.getDate() + 31);
-let sdpView = new Date(todayDate.getFullYear(), todayDate.getMonth(), 1);
+const earliestSearchStartDate = new Date(todayDate);
+earliestSearchStartDate.setDate(earliestSearchStartDate.getDate() + 2);
+function addMonthsClamped(date, months) {
+  const targetMonthIndex = date.getMonth() + months;
+  const targetYear = date.getFullYear() + Math.floor(targetMonthIndex / 12);
+  const targetMonth = ((targetMonthIndex % 12) + 12) % 12;
+  const lastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
+  return new Date(targetYear, targetMonth, Math.min(date.getDate(), lastDay));
+}
+const latestAllowedSearchStartDate = addMonthsClamped(todayDate, 6);
+let sdpView = new Date(earliestSearchStartDate.getFullYear(), earliestSearchStartDate.getMonth(), 1);
 let selectedSearchStartDate = null;
 
 function latestSearchStartDate() {
-  if (!selectedDate) return null;
-
-  const dayBeforeBooking = new Date(selectedDate);
-  dayBeforeBooking.setDate(dayBeforeBooking.getDate() - 1);
-
-  if (searchMode === 'single') {
-    return dayBeforeBooking;
-  }
-
-  return dayBeforeBooking < searchHorizonDate
-    ? dayBeforeBooking
-    : searchHorizonDate;
+  return latestAllowedSearchStartDate;
 }
 
 function clearSearchStart() {
@@ -1667,7 +1658,7 @@ function clearSearchStart() {
 }
 function updateSearchStartBound() {
   const latest = latestSearchStartDate();
-  sdpInput.disabled = !latest || latest < todayDate;
+  sdpInput.disabled = !latest || latest < earliestSearchStartDate;
   if (selectedSearchStartDate && (!latest || selectedSearchStartDate > latest)) clearSearchStart();
 }
 function renderSearchStartCalendar() {
@@ -1689,10 +1680,10 @@ function renderSearchStartCalendar() {
   for (let d = 1; d <= daysInMonth; d++) {
     const date = new Date(sdpView.getFullYear(), sdpView.getMonth(), d);
     const cell = document.createElement('div'); cell.className = 'cal-day'; cell.textContent = d;
-    if (!latest || date < todayDate || date > latest) cell.classList.add('disabled');
+    if (!latest || date < earliestSearchStartDate || date > latest) cell.classList.add('disabled');
     if (sameDay(date, todayDate)) cell.classList.add('today');
     if (sameDay(date, selectedSearchStartDate)) cell.classList.add('selected');
-    if (latest && date >= todayDate && date <= latest) cell.addEventListener('click', (e) => {
+    if (latest && date >= earliestSearchStartDate && date <= latest) cell.addEventListener('click', (e) => {
       e.stopPropagation(); selectedSearchStartDate = date; sdpValue.value = isoOf(date); sdpInput.value = fmtDate(date);
       clearSearchStartDate.classList.add('visible'); closeSearchStartCalendar();
     });
@@ -1766,7 +1757,7 @@ if (EXISTING_CONFIG) {
     if (parts.length === 3 && parts.every((n) => !Number.isNaN(n))) {
       const configuredDate = new Date(parts[0], parts[1] - 1, parts[2]);
       const latest = latestSearchStartDate();
-      if (configuredDate >= todayDate && latest && configuredDate <= latest) {
+      if (configuredDate >= earliestSearchStartDate && latest && configuredDate <= latest) {
         selectedSearchStartDate = configuredDate;
         sdpValue.value = EXISTING_CONFIG.search_start_date;
         sdpInput.value = fmtDate(configuredDate);
@@ -1793,9 +1784,7 @@ if (EXISTING_CONFIG) {
 }
 
 window.addEventListener('ikw-language-changed', () => {
-  centerLabelHeading.textContent = ikwI18n.lang() === 'pl'
-    ? `Ośrodki WORD do obserwowania (${CENTERS.length} w kraju)`
-    : `WORD centers to watch (${CENTERS.length} nationwide)`;
+  centerLabelHeading.textContent = t(`WORD centers to watch (${CENTERS.length} nationwide)`);
   setSearchMode(searchMode);
   updatePollIntervalDisplay();
   updateTimeWindow();
@@ -1863,7 +1852,8 @@ document.getElementById('form').addEventListener('submit', async (e) => {
     const orgIds = Array.from(selectedIds);
     if (!orgIds.length) throw new Error(t('Pick at least one WORD center.'));
 
-    // Capture the current mode before serializing both remembered selections.
+    // Persist the active selection without overwriting the remembered
+    // selection that belongs to the other search mode.
     if (searchMode === 'single') {
       rememberedSingleId = orgIds[0];
     } else {

@@ -130,13 +130,12 @@ def check_session_valid():
 
 def _wait_for_relogin_and_wake(prior_captured_at, wake_event):
     """Runs in a background thread after a forced relogin is launched, so
-    the dashboard's session-expiry estimate updates the moment the QR scan
-    lands instead of waiting for the poll loop's next regularly scheduled
-    cycle (up to MAX_POLL_INTERVAL_SECONDS away). Waking the loop just
-    re-runs run_check(), which recomputes session_expires_estimate from
-    session.json's fresh captured_at - same mechanism /setup already uses
-    for an interval change, so there's still only one thread ever touching
-    dash_status/status.json.
+    the dashboard/scheduler notices the fresh session without waiting for the
+    next regularly scheduled cycle (up to MAX_POLL_INTERVAL_SECONDS away).
+    The poll loop treats this Event as a state/schedule wake-up. If a SEARCH
+    was already due and is itself waiting for authentication, notifier.py
+    keeps that due-search state separately and runs it immediately after the
+    fresh captured_at appears; a wake from Settings still only reschedules.
 
     Watches for session.json's captured_at to actually change rather than
     just the auto-refresh lock clearing, since a stuck/failed relogin
@@ -219,7 +218,7 @@ def build_config(payload):
     # Keep the user's selections for both search modes. organization_ids remains
     # the active selection consumed by notifier.py; these two fields are UI
     # memory only, so switching single <-> multi never destroys the other mode's
-    # selection. Old 2.4.1 configs migrate from the active organization_ids.
+    # selection. Old configs migrate from the active organization_ids.
     single_organization_id = payload.get("single_organization_id")
     if single_organization_id in (None, ""):
         single_organization_id = organization_ids[0]

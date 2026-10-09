@@ -4,6 +4,14 @@ All notable changes to **Info Kierowca Notifier** are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.4.3] - 2026-10-09
+
+### Fixed
+- Restored the 2.4.1 search-date range after the 2.4.2 frontend regression: earliest selectable date is today + 2 days and latest is today + 6 calendar months.
+- The same search-date range again applies to both single-center and multi-center modes and is independent of the current booked exam date.
+- Preserved the 2.4.1 localization and search-mode UI behavior while retaining the new per-mode WORD-center memory.
+
+
 ## [2.4.2] - 2026-10-09
 
 ### Fixed
