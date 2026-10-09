@@ -130,12 +130,13 @@ def check_session_valid():
 
 def _wait_for_relogin_and_wake(prior_captured_at, wake_event):
     """Runs in a background thread after a forced relogin is launched, so
-    the dashboard/scheduler notices the fresh session without waiting for the
-    next regularly scheduled cycle (up to MAX_POLL_INTERVAL_SECONDS away).
-    The poll loop treats this Event as a state/schedule wake-up. If a SEARCH
-    was already due and is itself waiting for authentication, notifier.py
-    keeps that due-search state separately and runs it immediately after the
-    fresh captured_at appears; a wake from Settings still only reschedules.
+    the dashboard's session-expiry estimate updates the moment the QR scan
+    lands instead of waiting for the poll loop's next regularly scheduled
+    cycle (up to MAX_POLL_INTERVAL_SECONDS away). Waking the loop just
+    re-runs run_check(), which recomputes session_expires_estimate from
+    session.json's fresh captured_at - same mechanism /setup already uses
+    for an interval change, so there's still only one thread ever touching
+    dash_status/status.json.
 
     Watches for session.json's captured_at to actually change rather than
     just the auto-refresh lock clearing, since a stuck/failed relogin
@@ -215,6 +216,38 @@ def build_config(payload):
                 "— the site's search only accepts that many at a time"
             )
 
+    # Keep the user's selections for both search modes. organization_ids remains
+    # the active selection consumed by notifier.py; these two fields are UI
+    # memory only, so switching single <-> multi never destroys the other mode's
+    # selection. Old 2.4.1 configs migrate from the active organization_ids.
+    single_organization_id = payload.get("single_organization_id")
+    if single_organization_id in (None, ""):
+        single_organization_id = organization_ids[0]
+    try:
+        single_organization_id = int(single_organization_id)
+    except (TypeError, ValueError):
+        raise ValueError("Single-center WORD center ID must be numeric")
+
+    multi_organization_ids = payload.get("multi_organization_ids")
+    if multi_organization_ids is None:
+        multi_organization_ids = list(organization_ids)
+    if not isinstance(multi_organization_ids, list):
+        raise ValueError("Multi-center WORD center IDs must be a list")
+    multi_organization_ids = list(dict.fromkeys(
+        to_int_list(multi_organization_ids, "Multi-center WORD center IDs")
+    ))
+    if len(multi_organization_ids) > notifier.SEARCH_ORG_ID_COUNT:
+        raise ValueError(
+            f"Pick at most {notifier.SEARCH_ORG_ID_COUNT} WORD centers "
+            "for multi-center mode"
+        )
+
+    # The active mode is authoritative when Settings is saved.
+    if search_mode == "single":
+        single_organization_id = organization_ids[0]
+    else:
+        multi_organization_ids = list(dict.fromkeys(organization_ids))
+
     exam_types = payload.get("exam_types")
     if not isinstance(exam_types, list) or not exam_types or not set(exam_types) <= set(EXAM_TYPE_CHOICES):
         raise ValueError("Pick at least one exam type")
@@ -292,6 +325,8 @@ def build_config(payload):
         "pz_username": pz_username,
         "search_mode": search_mode,
         "organization_ids": organization_ids,
+        "single_organization_id": single_organization_id,
+        "multi_organization_ids": multi_organization_ids,
         "category": category,
         "profile_number": profile_number,
         "exam_types": exam_types,

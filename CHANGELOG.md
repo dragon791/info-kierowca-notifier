@@ -4,6 +4,16 @@ All notable changes to **Info Kierowca Notifier** are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.4.2] - 2026-10-09
+
+### Fixed
+- Search-mode switching now remembers the WORD-center selection separately for single-center and multi-center modes.
+- Switching from multi-center to single-center no longer destroys the previously selected multi-center list.
+- Switching back to multi-center restores the user's previous selection of up to 5 WORD centers.
+- The remembered selections are persisted in `config.json` and survive application restarts.
+- Existing 2.4.1 configurations are migrated automatically from the active `organization_ids` selection; selections already discarded by an older version cannot be reconstructed.
+
+
 ## [2.4.1] - 2026-10-08
 
 ### Fixed
