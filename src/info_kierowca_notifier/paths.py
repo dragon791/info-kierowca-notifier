@@ -14,7 +14,7 @@ can sit at the bottom of the import graph and be safely imported everywhere.
 """
 from pathlib import Path
 
-__version__ = "2.4.3"
+__version__ = "2.4.4"
 
 CONFIG_DIR = Path.home() / ".config" / "info-kierowca-notifier"
 CONFIG_FILE = CONFIG_DIR / "config.json"

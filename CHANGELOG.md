@@ -4,6 +4,16 @@ All notable changes to **Info Kierowca Notifier** are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.4.4] - 2026-10-09
+
+### Changed
+- Moved **Earliest acceptable exam date (optional)** from **Alerts** to **Exam and centers**.
+- Single-center and multi-center modes now remember their earliest acceptable exam date independently.
+- Either mode can keep the earliest acceptable exam date empty while the other mode uses a saved date.
+- Per-mode earliest-date selections are persisted in `config.json` and survive application restarts.
+- Existing configurations migrate the previously active `search_start_date` to the search mode that was active when the configuration was saved; the other mode starts empty.
+
+
 ## [2.4.3] - 2026-10-09
 
 ### Fixed

@@ -313,6 +313,34 @@ def build_config(payload):
     else:
         search_start = ""
 
+    # Keep the optional earliest acceptable date separately for both search
+    # modes. search_start_date remains the active value consumed by notifier.py;
+    # these two fields are UI memory, mirroring the per-mode WORD-center memory.
+    # Old configs migrate the active search_start_date only to the mode that was
+    # active when saved, leaving the other mode empty.
+    single_search_start_date = payload.get("single_search_start_date")
+    multi_search_start_date = payload.get("multi_search_start_date")
+
+    if single_search_start_date is None:
+        single_search_start_date = search_start if search_mode == "single" else ""
+    if multi_search_start_date is None:
+        multi_search_start_date = search_start if search_mode == "multi" else ""
+
+    for remembered_date in (single_search_start_date, multi_search_start_date):
+        if not isinstance(remembered_date, str):
+            raise ValueError("Earliest acceptable exam date must be a date like 2026-09-14")
+        if remembered_date:
+            try:
+                date.fromisoformat(remembered_date)
+            except ValueError:
+                raise ValueError("Earliest acceptable exam date must be a date like 2026-09-14")
+
+    # The active mode is authoritative when Settings is saved.
+    if search_mode == "single":
+        single_search_start_date = search_start
+    else:
+        multi_search_start_date = search_start
+
     login_method = payload.get("login_method", "mobywatel")
     if login_method not in ("mobywatel", "profil_zaufany"):
         raise ValueError("Choose a supported authentication method")
@@ -332,6 +360,8 @@ def build_config(payload):
         "ntfy_topic": ntfy_topic,
         "current_slot_date": current_slot_date,
         "search_start_date": search_start,
+        "single_search_start_date": single_search_start_date,
+        "multi_search_start_date": multi_search_start_date,
         "poll_interval_seconds": poll_interval_seconds,
         "earliest_slot_hour": earliest_slot_hour,
         "latest_slot_hour": latest_slot_hour,

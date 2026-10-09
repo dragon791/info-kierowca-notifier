@@ -797,6 +797,15 @@ WIZARD_PAGE = """<!doctype html>
       </div>
       <div id="selected-centers"></div>
       <div class="center-count" id="center-count"></div>
+
+      <label for="search_start_date_display" style="margin-top:1rem;">Earliest acceptable exam date (optional)</label>
+      <div class="datepick" id="search-start-datepick">
+        <input type="text" class="datepick-input has-clear" id="search_start_date_display" placeholder="Select a date" readonly>
+        <button type="button" class="datepick-clear" id="clear-search-start-date" aria-label="Clear earliest acceptable date" title="Clear earliest acceptable date">&times;</button>
+        <input type="hidden" id="search_start_date">
+        <div class="calendar" id="search-start-calendar"></div>
+      </div>
+      <div class="hint" id="search-start-hint"></div>
     </fieldset>
 
     <fieldset>
@@ -812,15 +821,6 @@ WIZARD_PAGE = """<!doctype html>
         <div class="calendar" id="calendar"></div>
       </div>
       <div class="hint">Enter the date of the existing booking that you want the app to reschedule.</div>
-
-      <label for="search_start_date_display" style="margin-top:1rem;">Earliest acceptable exam date (optional)</label>
-      <div class="datepick" id="search-start-datepick">
-        <input type="text" class="datepick-input has-clear" id="search_start_date_display" placeholder="Select a date" readonly>
-        <button type="button" class="datepick-clear" id="clear-search-start-date" aria-label="Clear earliest acceptable date" title="Clear earliest acceptable date">&times;</button>
-        <input type="hidden" id="search_start_date">
-        <div class="calendar" id="search-start-calendar"></div>
-      </div>
-      <div class="hint" id="search-start-hint"></div>
 
       <div class="freq-head" style="margin-top:1rem;">
         <label for="time_from_slider">Preferred time of day</label>
@@ -1042,6 +1042,20 @@ let selectedIds = new Set(
     : rememberedMultiIds
 );
 
+// Remember the optional earliest acceptable exam date independently for each
+// search mode. Existing configs only have search_start_date, so migrate that
+// value to the mode that was active when the config was saved; the other mode
+// intentionally starts empty.
+const legacySearchStartDate = EXISTING_CONFIG && typeof EXISTING_CONFIG.search_start_date === 'string'
+  ? EXISTING_CONFIG.search_start_date
+  : '';
+let rememberedSingleSearchStartDate = EXISTING_CONFIG && typeof EXISTING_CONFIG.single_search_start_date === 'string'
+  ? EXISTING_CONFIG.single_search_start_date
+  : (searchMode === 'single' ? legacySearchStartDate : '');
+let rememberedMultiSearchStartDate = EXISTING_CONFIG && typeof EXISTING_CONFIG.multi_search_start_date === 'string'
+  ? EXISTING_CONFIG.multi_search_start_date
+  : (searchMode === 'multi' ? legacySearchStartDate : '');
+
 const searchInput = document.getElementById('center-search');
 const dropdown = document.getElementById('center-dropdown');
 const selectedList = document.getElementById('selected-centers');
@@ -1113,14 +1127,20 @@ function updateSearchModeLabels() {
   document.getElementById('search-mode-multi-desc').textContent = ikwI18n.t('Up to 5 centers');
 }
 
-function setSearchMode(mode) {
+function setSearchMode(mode, saveCurrent = true) {
   const nextMode = mode === 'single' ? 'single' : 'multi';
 
-  // Save the selection belonging to the mode we are leaving.
-  if (searchMode === 'single') {
-    rememberedSingleId = selectedIds.size ? selectedIds.values().next().value : null;
-  } else {
-    rememberedMultiIds = Array.from(selectedIds).slice(0, MAX_CENTERS);
+  // Save the center and earliest-date selections belonging to the mode we are leaving.
+  // The initial render passes saveCurrent=false so values loaded from config are
+  // restored before the still-empty form controls can overwrite them.
+  if (saveCurrent) {
+    if (searchMode === 'single') {
+      rememberedSingleId = selectedIds.size ? selectedIds.values().next().value : null;
+      rememberedSingleSearchStartDate = sdpValue.value;
+    } else {
+      rememberedMultiIds = Array.from(selectedIds).slice(0, MAX_CENTERS);
+      rememberedMultiSearchStartDate = sdpValue.value;
+    }
   }
 
   searchMode = nextMode;
@@ -1142,6 +1162,8 @@ function setSearchMode(mode) {
   document.querySelectorAll('input[name="search_mode"]').forEach((radio) => {
     radio.checked = radio.value === searchMode;
   });
+
+  restoreSearchStartForMode();
 
   const searchStartHint = document.getElementById('search-start-hint');
 
@@ -1656,6 +1678,36 @@ function clearSearchStart() {
   clearSearchStartDate.classList.remove('visible');
   closeSearchStartCalendar();
 }
+function restoreSearchStartForMode() {
+  const remembered = searchMode === 'single'
+    ? rememberedSingleSearchStartDate
+    : rememberedMultiSearchStartDate;
+
+  if (!remembered) {
+    clearSearchStart();
+    return;
+  }
+
+  const parts = remembered.split('-').map(Number);
+  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) {
+    clearSearchStart();
+    return;
+  }
+
+  const configuredDate = new Date(parts[0], parts[1] - 1, parts[2]);
+  const latest = latestSearchStartDate();
+  if (configuredDate < earliestSearchStartDate || !latest || configuredDate > latest) {
+    clearSearchStart();
+    if (searchMode === 'single') rememberedSingleSearchStartDate = '';
+    else rememberedMultiSearchStartDate = '';
+    return;
+  }
+
+  selectedSearchStartDate = configuredDate;
+  sdpValue.value = remembered;
+  sdpInput.value = fmtDate(configuredDate);
+  clearSearchStartDate.classList.add('visible');
+}
 function updateSearchStartBound() {
   const latest = latestSearchStartDate();
   sdpInput.disabled = !latest || latest < earliestSearchStartDate;
@@ -1701,7 +1753,7 @@ updateSearchStartBound();
 
 renderSelected();
 
-setSearchMode(searchMode);
+setSearchMode(searchMode, false);
 
 if (EXISTING_CONFIG) {
   loginMethodSelect.value = EXISTING_CONFIG.login_method || 'mobywatel';
@@ -1752,20 +1804,9 @@ if (EXISTING_CONFIG) {
     }
   }
 
-  if (EXISTING_CONFIG.search_start_date) {
-    const parts = EXISTING_CONFIG.search_start_date.split('-').map(Number);
-    if (parts.length === 3 && parts.every((n) => !Number.isNaN(n))) {
-      const configuredDate = new Date(parts[0], parts[1] - 1, parts[2]);
-      const latest = latestSearchStartDate();
-      if (configuredDate >= earliestSearchStartDate && latest && configuredDate <= latest) {
-        selectedSearchStartDate = configuredDate;
-        sdpValue.value = EXISTING_CONFIG.search_start_date;
-        sdpInput.value = fmtDate(configuredDate);
-        clearSearchStartDate.classList.add('visible');
-      }
-    }
-  }
-
+  // setSearchMode() restores the earliest acceptable date belonging to the
+  // active search mode from its independent remembered value.
+  restoreSearchStartForMode();
   updateSearchStartBound();
 
   setPollIntervalSeconds(EXISTING_CONFIG.poll_interval_seconds || 60);
@@ -1856,8 +1897,10 @@ document.getElementById('form').addEventListener('submit', async (e) => {
     // selection that belongs to the other search mode.
     if (searchMode === 'single') {
       rememberedSingleId = orgIds[0];
+      rememberedSingleSearchStartDate = sdpValue.value;
     } else {
       rememberedMultiIds = orgIds.slice(0, MAX_CENTERS);
+      rememberedMultiSearchStartDate = sdpValue.value;
     }
 
     if (searchMode === 'single' && orgIds.length !== 1) {
@@ -1890,6 +1933,8 @@ document.getElementById('form').addEventListener('submit', async (e) => {
       exam_types: examTypes,
       current_slot_date: currentSlotDate,
       search_start_date: sdpValue.value,
+      single_search_start_date: rememberedSingleSearchStartDate,
+      multi_search_start_date: rememberedMultiSearchStartDate,
       poll_interval_seconds: parseInt(document.getElementById('poll_interval_seconds').value, 10),
       earliest_slot_hour: parseInt(timeFromHidden.value, 10),
       latest_slot_hour: parseInt(timeToHidden.value, 10),
