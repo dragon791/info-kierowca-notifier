@@ -4,6 +4,17 @@ All notable changes to **Info Kierowca Notifier** are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+
+## 2.4.5 — 2026-10-09
+
+### Fixed
+- Fixed opening the booking page after a matching exam slot is found.
+- Correctly restores the `__Host-Http-PUDO-DeviceId` cookie using the
+  host-only, Secure and HttpOnly attributes required by Chromium.
+- Prevents Chrome DevTools Protocol `Storage.setCookies` from failing with
+  `Invalid cookie fields` when launching the authenticated booking browser.
+
+
 ## [2.4.4] - 2026-10-09
 
 ### Changed
